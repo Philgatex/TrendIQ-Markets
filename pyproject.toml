@@ -1,0 +1,14 @@
+[tool.black]
+line-length = 140
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = 3.11
+ignore_missing_imports = true
+warn_unused_configs = true
+strict_optional = false
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q"
+testpaths = ["tests"]

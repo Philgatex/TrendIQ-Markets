@@ -33,9 +33,22 @@ jobs:
         run: |
           python tests/binance_test.py || true
           python tests/mt5_order_test.py || true
+      - name: Run pytest
+        run: |
+          python -m pytest
+      - name: Run coverage
+        run: |
+          coverage run -m pytest
+          coverage report --fail-under=60
       - name: Install linters
         run: |
-          pip install flake8 black
+          pip install flake8 black mypy
+      - name: Run black check
+        run: |
+          black --check .
       - name: Run flake8
         run: |
           flake8
+      - name: Run mypy
+        run: |
+          mypy .

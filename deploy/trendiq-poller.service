@@ -1,0 +1,16 @@
+[Unit]
+Description=TrendIQ Markets Snapshot Poller
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/workspaces/TrendIQ-Markets
+ExecStart=/usr/bin/env python3 /workspaces/TrendIQ-Markets/poller_runner.py
+Restart=always
+RestartSec=10
+Environment=TRENDIQ_ENABLE_POLLER=true
+Environment=TRENDIQ_POLLER_INTERVAL=30
+Environment=TRENDIQ_SNAPSHOT_DB=/workspaces/TrendIQ-Markets/trendiq_snapshot.db
+
+[Install]
+WantedBy=multi-user.target

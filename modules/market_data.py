@@ -7,7 +7,10 @@ import yfinance as yf
 DATA_PROVIDERS = {
     "Yahoo Finance (yfinance)": "yfinance",
     "Twelve Data (free API)": "twelvedata",
+    "Finnhub (free API)": "finnhub",
+    "Alpha Vantage (free API)": "alphavantage",
     "CCXT (Binance)": "ccxt",
+    "MetaTrader 5 (local connector)": "mt5",
 }
 
 TWELVE_DATA_BASE = "https://api.twelvedata.com"
@@ -131,11 +134,124 @@ def get_twelvedata_history(symbol: str, interval: str = "15m", outputsize: int =
         return pd.DataFrame()
 
 
+def get_finnhub_history(symbol: str, interval: str = "15m", count: int = 500) -> pd.DataFrame:
+    """Fetch historical candles from Finnhub.io using REST API.
+
+    Requires environment variable `FINNHUB_API_KEY`.
+    Returns a DataFrame with columns: Datetime, Open, High, Low, Close, Volume
+    """
+    api_key = os.environ.get("FINNHUB_API_KEY", "").strip()
+    if not api_key:
+        return pd.DataFrame()
+
+    # Finnhub uses resolution strings like 1,5,15,30,60,D,W,M
+    interval_map = {
+        "1m": "1",
+        "5m": "5",
+        "15m": "15",
+        "30m": "30",
+        "1h": "60",
+        "1d": "D",
+    }
+    resolution = interval_map.get(interval, "15")
+
+    try:
+        import time
+        to_ts = int(time.time())
+        # request last `count` bars by estimating from resolution (approx)
+        from_ts = to_ts - max(60 * int(resolution if resolution.isdigit() else 60) * count, 60 * 60)
+
+        resp = requests.get(
+            "https://finnhub.io/api/v1/stock/candle",
+            params={
+                "symbol": symbol,
+                "resolution": resolution,
+                "from": from_ts,
+                "to": to_ts,
+                "token": api_key,
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        if data.get("s") != "ok":
+            return pd.DataFrame()
+
+        df = pd.DataFrame({
+            "Datetime": pd.to_datetime(data.get("t", []), unit="s"),
+            "Open": data.get("o", []),
+            "High": data.get("h", []),
+            "Low": data.get("l", []),
+            "Close": data.get("c", []),
+            "Volume": data.get("v", []),
+        })
+        return df.sort_values("Datetime").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_alphavantage_history(symbol: str, interval: str = "15m", outputsize: str = "compact") -> pd.DataFrame:
+    """Fetch intraday history from Alpha Vantage.
+
+    Requires environment variable `ALPHAVANTAGE_API_KEY`.
+    Returns a DataFrame with columns: Datetime, Open, High, Low, Close, Volume
+    """
+    api_key = os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
+    if not api_key:
+        return pd.DataFrame()
+
+    interval_map = {
+        "1m": "1min",
+        "5m": "5min",
+        "15m": "15min",
+        "30m": "30min",
+        "1h": "60min",
+    }
+    av_interval = interval_map.get(interval, "15min")
+
+    try:
+        params = {
+            "function": "TIME_SERIES_INTRADAY",
+            "symbol": symbol,
+            "interval": av_interval,
+            "outputsize": outputsize,
+            "datatype": "json",
+            "apikey": api_key,
+        }
+        resp = requests.get("https://www.alphavantage.co/query", params=params, timeout=20)
+        data = resp.json()
+        key = f"Time Series ({av_interval})"
+        if key not in data:
+            return pd.DataFrame()
+
+        series = data[key]
+        rows = []
+        for ts, values in series.items():
+            rows.append({
+                "Datetime": pd.to_datetime(ts),
+                "Open": float(values.get("1. open", 0)),
+                "High": float(values.get("2. high", 0)),
+                "Low": float(values.get("3. low", 0)),
+                "Close": float(values.get("4. close", 0)),
+                "Volume": float(values.get("5. volume", 0)),
+            })
+
+        df = pd.DataFrame(rows)
+        return df.sort_values("Datetime").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
 # Optional crypto connector via CCXT
 try:
     from .crypto import get_crypto_history
 except Exception:
     get_crypto_history = None
+
+# Optional MT5 connector
+try:
+    from .mt5_connector import get_mt5_history
+except Exception:
+    get_mt5_history = None
 
 
 def get_yfinance_history(symbol: str, period: str = "5d", interval: str = "15m") -> pd.DataFrame:
@@ -166,12 +282,38 @@ def get_market_data(symbol: str, period: str = "5d", interval: str = "15m", prov
         df = get_twelvedata_history(symbol, interval=td_interval, outputsize=500)
         if not df.empty:
             return df
+
+    if provider == "finnhub":
+        df = get_finnhub_history(symbol, interval=interval, count=500)
+        if not df.empty:
+            return df
+
+    if provider == "alphavantage":
+        df = get_alphavantage_history(symbol, interval=interval, outputsize="compact")
+        if not df.empty:
+            return df
+
     if provider == "ccxt":
-        # Prefer CCXT for crypto symbols when available
         if get_crypto_history is not None:
             df = get_crypto_history(symbol, provider="ccxt", timeframe=interval)
             if not df.empty:
                 return df
+
+    if provider == "mt5":
+        if get_mt5_history is not None:
+            timeframe_map = {
+                "1m": "M1",
+                "5m": "M5",
+                "15m": "M15",
+                "30m": "M30",
+                "1h": "H1",
+                "1d": "D1",
+            }
+            mt5_timeframe = timeframe_map.get(interval, "M15")
+            df = get_mt5_history(symbol, timeframe=mt5_timeframe, count=500)
+            if not df.empty:
+                return df
+
     return get_yfinance_history(symbol, period, interval)
 
 
@@ -232,6 +374,28 @@ def get_latest_snapshot(symbols: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_snapshot_from_file(path: str = None) -> pd.DataFrame:
+    path = path or os.environ.get("TRENDIQ_SNAPSHOT_PATH", "trendiq_snapshot.json")
+    try:
+        if not os.path.exists(path):
+            return pd.DataFrame()
+        import json
+
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        data = payload.get("data", [])
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        # ensure numeric columns
+        for col in ["Price", "Open", "High", "Low", "Previous Close", "% Change"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 def get_twelvedata_trend_summary(symbol: str, interval: str = "1h") -> dict:
     api_key = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
     if not api_key:
@@ -265,3 +429,86 @@ def get_market_trend_summary(symbol: str, interval: str = "1h") -> dict:
 
 def get_market_info(market_name: str) -> dict:
     return MARKET_SYMBOLS.get(market_name, {})
+
+
+def check_provider_health(provider: str, symbol: str = None, timeout: int = 8) -> dict:
+    """Quick health check for a provider. Returns status and latency_ms.
+
+    provider: one of 'yfinance', 'twelvedata', 'finnhub', 'alphavantage', 'ccxt', 'mt5'
+    """
+    import time
+
+    start = time.time()
+    status = False
+    message = "Unknown"
+
+    try:
+        if provider == "yfinance":
+            # quick price ping
+            import yfinance as yf
+
+            if symbol is None:
+                symbol = "QQQ"
+            t0 = time.time()
+            ticker = yf.Ticker(symbol)
+            _ = getattr(ticker, "fast_info", None)
+            status = True
+            message = "yfinance reachable"
+
+        elif provider == "twelvedata":
+            api_key = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
+            if not api_key:
+                raise RuntimeError("TWELVE_DATA_API_KEY not set")
+            resp = requests.get(f"{TWELVE_DATA_BASE}/time_series", params={"symbol": normalize_twelvedata_symbol(symbol or "EUR/USD"), "interval": "15min", "apikey": api_key}, timeout=timeout)
+            resp.raise_for_status()
+            status = True
+            message = "TwelveData OK"
+
+        elif provider == "finnhub":
+            api_key = os.environ.get("FINNHUB_API_KEY", "").strip()
+            if not api_key:
+                raise RuntimeError("FINNHUB_API_KEY not set")
+            resp = requests.get("https://finnhub.io/api/v1/quote", params={"symbol": symbol or "AAPL", "token": api_key}, timeout=timeout)
+            resp.raise_for_status()
+            status = True
+            message = "Finnhub OK"
+
+        elif provider == "alphavantage":
+            api_key = os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
+            if not api_key:
+                raise RuntimeError("ALPHAVANTAGE_API_KEY not set")
+            resp = requests.get("https://www.alphavantage.co/query", params={"function": "TIME_SERIES_INTRADAY", "symbol": symbol or "IBM", "interval": "15min", "apikey": api_key}, timeout=timeout)
+            resp.raise_for_status()
+            status = True
+            message = "AlphaVantage OK"
+
+        elif provider == "ccxt":
+            try:
+                import ccxt
+                ex = getattr(ccxt, "binance")({"enableRateLimit": True})
+                _ = getattr(ex, "load_markets", None)
+                status = True
+                message = "CCXT available"
+            except Exception as e:
+                raise
+
+        elif provider == "mt5":
+            # check MT5 local availability
+            try:
+                import MetaTrader5 as mt5
+                ok = mt5.initialize()
+                if ok:
+                    mt5.shutdown()
+                status = True
+                message = "MT5 available"
+            except Exception:
+                raise
+
+        else:
+            message = "Unknown provider"
+    except Exception as e:
+        status = False
+        message = str(e)
+
+    latency_ms = int((time.time() - start) * 1000)
+    return {"provider": provider, "ok": status, "latency_ms": latency_ms, "message": message}

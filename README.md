@@ -1,16 +1,21 @@
 # TrendIQ Markets
 
 TrendIQ Markets is a real-time multi-market analysis, prediction scoring, and risk planning dashboard built with Python and Streamlit.
+It combines TradingView-style charting with TrendSpider/Koyfin-style workflow tools and broker-style MT5 data support.
 
 ## Features
 
-- Multi-market dashboard
-- Nasdaq-100, S&P 500, Dow Jones, forex, gold, oil, crypto, and global indices
+- Multi-market dashboard with indices, forex, commodities, crypto, and MT5-style broker coverage
 - Technical indicators: EMA, RSI, MACD, ATR, Bollinger Bands
-- Global market regime classification
-- Bullish, bearish, and sideways prediction scoring
-- Support and resistance detection
-- Risk management and position sizing
+- Auto support and resistance detection
+- Global market regime classification with risk-on / risk-off signals
+- Prediction probability engine with bias, confidence, and playbook levels
+- Broker price input and local MT5 connector support
+- News feed and curated economic calendar
+- Trade risk calculator and position sizing tools
+- Prediction journal for recording thesis and signal notes
+- Simple historical backtesting engine for MA crossover strategies
+- Mobile-friendly alerts and signal banners
 - Streamlit-ready deployment
 
 ## Disclaimer
@@ -22,6 +27,41 @@ This tool provides educational market analysis only. It is not financial advice 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
+```
+
+## Snapshot Poller and Multi-Process Safety
+
+TrendIQ now supports a server-side snapshot poller that updates a shared SQLite store instead of relying on a JSON file. This makes the app safer when multiple Streamlit processes or sessions are reading the same snapshot data.
+
+### Run a standalone poller
+
+```bash
+export TRENDIQ_SNAPSHOT_DB=trendiq_snapshot.db
+export TRENDIQ_POLLER_INTERVAL=30
+python poller_runner.py
+```
+
+### Run the poller from the Streamlit app process
+
+Set this environment variable before launching the app:
+
+```bash
+export TRENDIQ_ENABLE_POLLER=true
+export TRENDIQ_POLLER_INTERVAL=30
+export TRENDIQ_SNAPSHOT_DB=trendiq_snapshot.db
+streamlit run app.py
+```
+
+### Systemd service template
+
+A sample systemd unit file is included at `deploy/trendiq-poller.service`.
+
+Update `WorkingDirectory` and `ExecStart` if your repository is installed in a different location, then enable and start it with:
+
+```bash
+sudo cp deploy/trendiq-poller.service /etc/systemd/system/trendiq-poller.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now trendiq-poller.service
 ```
 
 ## Streamlit Cloud Deployment
@@ -42,6 +82,28 @@ It also supports a free market data provider:
 The app maps common forex, indices, commodities, and crypto symbols to XM/MT5-style coverage where possible.
 
 For direct broker-level access with XM or MetaTrader 5, a local MT5 installation or broker-specific API is required.
+
+### Staging and live order safety
+
+TrendIQ supports a simple staging environment via the `APP_ENV` environment
+variable. Set `APP_ENV=staging` or `APP_ENV=development` to enable non-production
+behavior and clearer warnings.
+
+For Binance live trading, use the following flags:
+
+- `BINANCE_TESTNET=true` — route Binance calls to Binance spot testnet.
+- `BINANCE_ALLOW_LIVE_ORDERS=true` — enable actual order placement when `dry_run=False`.
+- `BINANCE_API_KEY` and `BINANCE_API_SECRET` — required for authenticated API access.
+
+The live order scaffold in `modules/binance.py` is safe by default; unless
+`BINANCE_ALLOW_LIVE_ORDERS` is explicitly enabled, order submissions will be
+skipped with a clear warning.
+
+Optional news and calendar support:
+
+- `NEWSAPI_API_KEY` — optional key to fetch live market news from NewsAPI.
+- `ECONOMIC_CALENDAR_API_KEY` — set this if you wire a live calendar feed in the future.
+- `TRENDIQ_JOURNAL_PATH` — override the local prediction journal file path.
 
 ### MT5 / MetaTrader 5 (optional)
 
