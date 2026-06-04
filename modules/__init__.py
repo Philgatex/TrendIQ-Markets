@@ -8,4 +8,5 @@ __all__ = [
     "sentiment_engine",
     "crypto",
     "mt5_connector",
+    "binance",
 ]

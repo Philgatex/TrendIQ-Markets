@@ -2,6 +2,7 @@ import sys
 
 sys.path.append('.')
 
+
 def main():
     try:
         import modules.market_data as md

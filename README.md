@@ -60,6 +60,16 @@ Usage notes:
 
 If you want help wiring a full MT5 integration (including authenticated order execution), I can add detailed steps and automated tests — say the word.
 
+### Binance (authenticated orders - scaffold)
+
+The repository now includes a safe, dry-run scaffold for Binance using `ccxt` at `modules/binance.py`.
+
+- It requires `ccxt` (already in `requirements.txt`).
+- Configure `BINANCE_API_KEY` and `BINANCE_API_SECRET` environment variables to enable authenticated calls.
+- By default `place_order(..., dry_run=True)` will not execute live orders — set `dry_run=False` only when you're sure.
+
+See `tests/binance_test.py` for a non-destructive smoke test.
+
 ## TradingView-style Charts and Live Trends
 
 - The dashboard now supports a TradingView-style widget for supported symbols, embedded directly in the app.

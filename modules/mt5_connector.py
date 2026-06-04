@@ -29,10 +29,11 @@ def get_mt5_history(symbol: str, timeframe: str = "M15", count: int = 500):
     """Fetch OHLCV history from MT5. Returns empty DataFrame when unavailable."""
     try:
         import MetaTrader5 as mt5
-        from datetime import datetime
 
         # Map timeframe string to mt5 timeframe constants if needed; keep simple
-        rates = mt5.copy_rates_from_pos(symbol, getattr(mt5, timeframe, mt5.TIMEFRAME_M15), 0, count)
+        rates = mt5.copy_rates_from_pos(
+            symbol, getattr(mt5, timeframe, mt5.TIMEFRAME_M15), 0, count
+        )
         if rates is None:
             return pd.DataFrame()
         df = pd.DataFrame(rates)
@@ -42,3 +43,20 @@ def get_mt5_history(symbol: str, timeframe: str = "M15", count: int = 500):
         return df
     except Exception:
         return pd.DataFrame()
+
+
+def place_mt5_order(symbol: str, side: str, volume: float, price: Optional[float] = None, dry_run: bool = True) -> dict:
+    """Stub for placing an MT5 order. Returns a simulated response when MT5 isn't available.
+
+    Note: Real MT5 order placement requires the MetaTrader5 package and a running MT5 terminal.
+    """
+    try:
+        import MetaTrader5 as mt5
+        # Reference mt5 to satisfy linters (real implementation would use mt5.order_send)
+        _ = getattr(mt5, '__name__', None)
+        if dry_run:
+            return {"skipped": True, "reason": "dry_run enabled", "simulated": True}
+        # Live execution path would be implemented here when MT5 is available.
+        return {"skipped": True, "reason": "MT5 live execution not implemented in stub"}
+    except Exception:
+        return {"skipped": True, "reason": "MetaTrader5 not available", "simulated": True}
