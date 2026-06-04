@@ -1,6 +1,33 @@
+import os
+
 import pandas as pd
+import requests
 import yfinance as yf
 
+DATA_PROVIDERS = {
+    "Yahoo Finance (yfinance)": "yfinance",
+    "Twelve Data (free API)": "twelvedata",
+    "CCXT (Binance)": "ccxt",
+}
+
+TWELVE_DATA_BASE = "https://api.twelvedata.com"
+
+TWELVEDATA_SYMBOL_MAP = {
+    "EURUSD=X": "EUR/USD",
+    "GBPUSD=X": "GBP/USD",
+    "JPY=X": "USD/JPY",
+    "AUDUSD=X": "AUD/USD",
+    "CAD=X": "USD/CAD",
+    "CHF=X": "USD/CHF",
+    "EURJPY=X": "EUR/JPY",
+    "GBPJPY=X": "GBP/JPY",
+    "AUDJPY=X": "AUD/JPY",
+    "EURGBP=X": "EUR/GBP",
+    "BTC-USD": "BTC/USD",
+    "ETH-USD": "ETH/USD",
+    "LTC-USD": "LTC/USD",
+    "XRP-USD": "XRP/USD",
+}
 
 MARKET_SYMBOLS = {
     "Nasdaq-100 / US100 Proxy": {"symbol": "QQQ", "type": "index", "description": "Nasdaq-100 ETF proxy"},
@@ -17,13 +44,29 @@ MARKET_SYMBOLS = {
     "Brent Crude Oil": {"symbol": "BZ=F", "type": "commodity", "description": "Brent crude oil futures"},
     "Bitcoin": {"symbol": "BTC-USD", "type": "crypto", "description": "Bitcoin against USD"},
     "Ethereum": {"symbol": "ETH-USD", "type": "crypto", "description": "Ethereum against USD"},
+    "Litecoin": {"symbol": "LTC-USD", "type": "crypto", "description": "Litecoin against USD"},
+    "Ripple": {"symbol": "XRP-USD", "type": "crypto", "description": "Ripple against USD"},
     "EUR/USD": {"symbol": "EURUSD=X", "type": "forex", "description": "Euro against US Dollar"},
     "GBP/USD": {"symbol": "GBPUSD=X", "type": "forex", "description": "British Pound against US Dollar"},
     "USD/JPY": {"symbol": "JPY=X", "type": "forex", "description": "US Dollar against Japanese Yen"},
     "AUD/USD": {"symbol": "AUDUSD=X", "type": "forex", "description": "Australian Dollar against US Dollar"},
     "USD/CAD": {"symbol": "CAD=X", "type": "forex", "description": "US Dollar against Canadian Dollar"},
     "USD/CHF": {"symbol": "CHF=X", "type": "forex", "description": "US Dollar against Swiss Franc"},
+    "EUR/JPY": {"symbol": "EURJPY=X", "type": "forex", "description": "Euro against Japanese Yen"},
+    "GBP/JPY": {"symbol": "GBPJPY=X", "type": "forex", "description": "British Pound against Japanese Yen"},
+    "AUD/JPY": {"symbol": "AUDJPY=X", "type": "forex", "description": "Australian Dollar against Japanese Yen"},
+    "EUR/GBP": {"symbol": "EURGBP=X", "type": "forex", "description": "Euro against British Pound"},
     "US 10Y Yield": {"symbol": "^TNX", "type": "bond", "description": "US 10-year Treasury yield proxy"},
+    "US 30Y Yield": {"symbol": "^TYX", "type": "bond", "description": "US 30-year Treasury yield proxy"},
+    "XM EUR/USD": {"symbol": "EURUSD=X", "type": "forex", "description": "XM broker EUR/USD"},
+    "XM GBP/USD": {"symbol": "GBPUSD=X", "type": "forex", "description": "XM broker GBP/USD"},
+    "XM Gold": {"symbol": "GC=F", "type": "commodity", "description": "XM broker Gold"},
+    "XM Silver": {"symbol": "SI=F", "type": "commodity", "description": "XM broker Silver"},
+    "XM Crude Oil": {"symbol": "CL=F", "type": "commodity", "description": "XM broker WTI Crude Oil"},
+    "XM Bitcoin": {"symbol": "BTC-USD", "type": "crypto", "description": "XM broker Bitcoin"},
+    "MT5 NASDAQ 100": {"symbol": "QQQ", "type": "index", "description": "MT5-style Nasdaq 100 proxy"},
+    "MT5 S&P 500": {"symbol": "SPY", "type": "index", "description": "MT5-style S&P 500 proxy"},
+    "MT5 Dow Jones": {"symbol": "DIA", "type": "index", "description": "MT5-style Dow Jones proxy"},
 }
 
 
@@ -37,7 +80,6 @@ def clean_yfinance_data(data: pd.DataFrame) -> pd.DataFrame:
         data.columns = [col[0] for col in data.columns]
 
     data = data.reset_index()
-
     required_columns = ["Open", "High", "Low", "Close"]
 
     for col in required_columns:
@@ -45,11 +87,58 @@ def clean_yfinance_data(data: pd.DataFrame) -> pd.DataFrame:
             return pd.DataFrame()
 
     data = data.dropna(subset=required_columns)
-
     return data
 
 
-def get_market_data(symbol: str, period: str = "5d", interval: str = "15m") -> pd.DataFrame:
+def normalize_twelvedata_symbol(symbol: str) -> str:
+    return TWELVEDATA_SYMBOL_MAP.get(symbol, symbol)
+
+
+def get_twelvedata_history(symbol: str, interval: str = "15m", outputsize: int = 500) -> pd.DataFrame:
+    api_key = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
+    if not api_key:
+        return pd.DataFrame()
+
+    normalized = normalize_twelvedata_symbol(symbol)
+    params = {
+        "symbol": normalized,
+        "interval": interval,
+        "outputsize": outputsize,
+        "timezone": "UTC",
+        "apikey": api_key,
+    }
+
+    try:
+        response = requests.get(f"{TWELVE_DATA_BASE}/time_series", params=params, timeout=15)
+        data = response.json()
+        if "values" not in data:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data["values"])
+        df = df.rename(columns={
+            "datetime": "Datetime",
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        })
+        df["Datetime"] = pd.to_datetime(df["Datetime"])
+        numeric_cols = ["Open", "High", "Low", "Close", "Volume"]
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors="coerce")
+        return df.sort_values("Datetime").reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+# Optional crypto connector via CCXT
+try:
+    from .crypto import get_crypto_history
+except Exception:
+    get_crypto_history = None
+
+
+def get_yfinance_history(symbol: str, period: str = "5d", interval: str = "15m") -> pd.DataFrame:
     try:
         raw_data = yf.download(
             symbol,
@@ -58,10 +147,32 @@ def get_market_data(symbol: str, period: str = "5d", interval: str = "15m") -> p
             progress=False,
             auto_adjust=False
         )
-        data = clean_yfinance_data(raw_data)
-        return data
+        return clean_yfinance_data(raw_data)
     except Exception:
         return pd.DataFrame()
+
+
+def get_market_data(symbol: str, period: str = "5d", interval: str = "15m", provider: str = "yfinance") -> pd.DataFrame:
+    if provider == "twelvedata":
+        interval_map = {
+            "1m": "1min",
+            "5m": "5min",
+            "15m": "15min",
+            "30m": "30min",
+            "1h": "1h",
+            "1d": "1day",
+        }
+        td_interval = interval_map.get(interval, interval)
+        df = get_twelvedata_history(symbol, interval=td_interval, outputsize=500)
+        if not df.empty:
+            return df
+    if provider == "ccxt":
+        # Prefer CCXT for crypto symbols when available
+        if get_crypto_history is not None:
+            df = get_crypto_history(symbol, provider="ccxt", timeframe=interval)
+            if not df.empty:
+                return df
+    return get_yfinance_history(symbol, period, interval)
 
 
 def get_latest_snapshot(symbols: dict) -> pd.DataFrame:
@@ -72,27 +183,33 @@ def get_latest_snapshot(symbols: dict) -> pd.DataFrame:
         market_type = details.get("type")
 
         try:
-            data = yf.download(
-                symbol,
-                period="2d",
-                interval="1d",
-                progress=False,
-                auto_adjust=False
-            )
+            ticker = yf.Ticker(symbol)
+            fast_info = getattr(ticker, "fast_info", {}) or {}
 
-            data = clean_yfinance_data(data)
+            close = fast_info.get("last_price")
+            open_price = fast_info.get("open")
+            high = fast_info.get("day_high")
+            low = fast_info.get("day_low")
+            previous_close = fast_info.get("previous_close")
 
-            if data.empty or len(data) < 1:
-                continue
-
-            latest = data.iloc[-1]
-            previous = data.iloc[-2] if len(data) > 1 else latest
-
-            close = float(latest["Close"])
-            open_price = float(latest["Open"])
-            high = float(latest["High"])
-            low = float(latest["Low"])
-            previous_close = float(previous["Close"])
+            if close is None or previous_close is None:
+                data = ticker.history(period="2d", interval="1d", auto_adjust=False)
+                data = clean_yfinance_data(data)
+                if data.empty or len(data) < 1:
+                    continue
+                latest = data.iloc[-1]
+                previous = data.iloc[-2] if len(data) > 1 else latest
+                close = float(latest["Close"])
+                open_price = float(latest["Open"])
+                high = float(latest["High"])
+                low = float(latest["Low"])
+                previous_close = float(previous["Close"])
+            else:
+                close = float(close)
+                open_price = float(open_price or close)
+                high = float(high or close)
+                low = float(low or close)
+                previous_close = float(previous_close)
 
             change = close - previous_close
             change_pct = (change / previous_close) * 100 if previous_close != 0 else 0
@@ -109,11 +226,41 @@ def get_latest_snapshot(symbols: dict) -> pd.DataFrame:
                 "Change": change,
                 "% Change": change_pct
             })
-
         except Exception:
             continue
 
     return pd.DataFrame(rows)
+
+
+def get_twelvedata_trend_summary(symbol: str, interval: str = "1h") -> dict:
+    api_key = os.environ.get("TWELVE_DATA_API_KEY", "").strip()
+    if not api_key:
+        return {}
+
+    normalized_symbol = normalize_twelvedata_symbol(symbol)
+    params = {
+        "symbol": normalized_symbol,
+        "interval": interval,
+        "apikey": api_key,
+    }
+
+    try:
+        response = requests.get(f"{TWELVE_DATA_BASE}/technical_summary", params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        if data.get("status") != "ok":
+            return {}
+
+        return data
+    except Exception:
+        return {}
+
+
+def get_market_trend_summary(symbol: str, interval: str = "1h") -> dict:
+    summary = get_twelvedata_trend_summary(symbol, interval=interval)
+    if summary:
+        return summary
+    return {}
 
 
 def get_market_info(market_name: str) -> dict:
