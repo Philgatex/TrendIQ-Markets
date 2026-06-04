@@ -1,172 +1,206 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 import plotly.graph_objects as go
 
-st.set_page_config(
-    page_title="TrendIQ Markets",
-    page_icon="📈",
-    layout="wide"
-)
+from modules.market_data import MARKET_SYMBOLS, get_market_data, get_latest_snapshot, get_market_info
+from modules.indicators import add_indicators, get_indicator_summary, detect_support_resistance
+from modules.sentiment_engine import build_market_regime
+from modules.prediction_engine import generate_prediction
+from modules.risk_engine import generate_trade_plan
+
+
+st.set_page_config(page_title="TrendIQ Markets", page_icon="📈", layout="wide")
+
+
+@st.cache_data(ttl=60)
+def cached_market_data(symbol: str, period: str, interval: str):
+    return get_market_data(symbol, period, interval)
+
+
+@st.cache_data(ttl=120)
+def cached_snapshot():
+    return get_latest_snapshot(MARKET_SYMBOLS)
+
+
+def format_number(value, decimals=2):
+    try:
+        return f"{float(value):,.{decimals}f}"
+    except Exception:
+        return "N/A"
+
+
+def create_candlestick_chart(df: pd.DataFrame, market_name: str):
+    fig = go.Figure()
+    time_col = df.columns[0]
+    fig.add_trace(go.Candlestick(x=df[time_col], open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price"))
+    if "EMA20" in df.columns:
+        fig.add_trace(go.Scatter(x=df[time_col], y=df["EMA20"], mode="lines", name="EMA 20"))
+    if "EMA50" in df.columns:
+        fig.add_trace(go.Scatter(x=df[time_col], y=df["EMA50"], mode="lines", name="EMA 50"))
+    if "EMA200" in df.columns:
+        fig.add_trace(go.Scatter(x=df[time_col], y=df["EMA200"], mode="lines", name="EMA 200"))
+    fig.update_layout(title=f"{market_name} Price Chart", height=650, xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=50, b=20))
+    return fig
+
 
 st.title("TrendIQ Markets")
-st.subheader("Real-time multi-market analysis and prediction dashboard")
+st.caption("Real-time multi-market analysis, prediction scoring, and risk planning dashboard.")
 
 st.warning(
-    "This platform provides educational market analysis only. "
-    "It is not financial advice and does not guarantee profits."
+    "This tool provides educational market analysis only. It is not financial advice and does not guarantee profits. "
+    "Free market data may be delayed and may differ from broker CFD prices."
 )
 
-markets = {
-    "Nasdaq-100 / US100 Proxy": "QQQ",
-    "S&P 500 Proxy": "SPY",
-    "Dow Jones / US30 Proxy": "DIA",
-    "Gold Proxy": "GC=F",
-    "Crude Oil": "CL=F",
-    "Bitcoin": "BTC-USD",
-    "EUR/USD": "EURUSD=X",
-    "GBP/USD": "GBPUSD=X",
-    "USD/JPY": "JPY=X"
-}
+st.sidebar.header("Dashboard Settings")
+market_names = list(MARKET_SYMBOLS.keys())
+selected_market = st.sidebar.selectbox("Select Market", market_names, index=0)
+period = st.sidebar.selectbox("Data Period", ["1d", "5d", "1mo", "3mo", "6mo", "1y"], index=1)
+interval = st.sidebar.selectbox("Candle Interval", ["1m", "5m", "15m", "30m", "1h", "1d"], index=2)
 
-selected_market = st.selectbox("Select Market", list(markets.keys()))
-ticker = markets[selected_market]
+st.sidebar.divider()
+st.sidebar.header("Risk Settings")
+account_equity = st.sidebar.number_input("Account Equity", min_value=1.0, value=100.0, step=10.0)
+risk_percentage = st.sidebar.number_input("Risk % Per Trade", min_value=0.1, max_value=20.0, value=2.0, step=0.1)
+value_per_point = st.sidebar.number_input("Value Per Point", min_value=0.01, value=1.0, step=0.01, help="Confirm this from your broker contract specification.")
+manual_refresh = st.sidebar.button("Refresh Data")
+if manual_refresh:
+    st.cache_data.clear()
 
-period = st.selectbox("Select Period", ["1d", "5d", "1mo", "3mo", "6mo"], index=1)
-interval = st.selectbox("Select Interval", ["1m", "5m", "15m", "30m", "1h", "1d"], index=2)
+market_info = get_market_info(selected_market)
+symbol = market_info.get("symbol")
+market_type = market_info.get("type", "index")
 
-data = yf.download(ticker, period=period, interval=interval, progress=False)
+with st.spinner("Loading market data..."):
+    data = cached_market_data(symbol, period, interval)
+    snapshot_df = cached_snapshot()
 
 if data.empty:
-    st.error("No market data available. Try another market, period, or interval.")
-else:
-    data = data.reset_index()
+    st.error("No data available. Try another market, period, or interval.")
+    st.stop()
 
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = [col[0] for col in data.columns]
+data = add_indicators(data)
+if data.empty:
+    st.error("Indicator calculation failed due to insufficient data.")
+    st.stop()
 
-    latest_close = float(data["Close"].iloc[-1])
-    previous_close = float(data["Close"].iloc[-2]) if len(data) > 1 else latest_close
-    change = latest_close - previous_close
-    change_pct = (change / previous_close) * 100 if previous_close != 0 else 0
+regime = build_market_regime(snapshot_df)
+indicator_summary = get_indicator_summary(data)
+prediction = generate_prediction(data, regime, market_type)
+levels = prediction.get("levels", {})
 
-    col1, col2, col3 = st.columns(3)
+latest = data.iloc[-1]
+latest_close = float(latest["Close"])
+previous_close = float(data["Close"].iloc[-2]) if len(data) > 1 else latest_close
+change = latest_close - previous_close
+change_pct = (change / previous_close) * 100 if previous_close != 0 else 0
 
-    col1.metric("Current Price", f"{latest_close:,.2f}")
-    col2.metric("Change", f"{change:,.2f}", f"{change_pct:.2f}%")
-    col3.metric("Market", selected_market)
+st.subheader("Selected Market Overview")
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Market", selected_market)
+col2.metric("Current Price", format_number(latest_close))
+col3.metric("Change", format_number(change), f"{change_pct:.2f}%")
+col4.metric("Bias", prediction.get("final_bias", "N/A"))
+st.caption(f"Symbol used: **{symbol}** | Market type: **{market_type}** | Data source: **yfinance free market data**")
 
-    data["EMA20"] = data["Close"].ewm(span=20, adjust=False).mean()
-    data["EMA50"] = data["Close"].ewm(span=50, adjust=False).mean()
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Global Market Regime", "Market Chart", "Prediction", "Risk Manager", "Technical Summary"])
 
-    delta = data["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
-    rs = avg_gain / avg_loss
-    data["RSI"] = 100 - (100 / (1 + rs))
-
-    latest_ema20 = float(data["EMA20"].iloc[-1])
-    latest_ema50 = float(data["EMA50"].iloc[-1])
-    latest_rsi = float(data["RSI"].iloc[-1]) if not pd.isna(data["RSI"].iloc[-1]) else 50
-
-    bullish_score = 0
-    bearish_score = 0
-
-    if latest_close > latest_ema20:
-        bullish_score += 1
+with tab1:
+    st.header("Global Market Regime")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Market Regime", regime.get("market_regime", "N/A"))
+    m2.metric("Risk-On Probability", f"{regime.get('risk_on_probability', 0)}%")
+    m3.metric("Risk-Off Probability", f"{regime.get('risk_off_probability', 0)}%")
+    st.info(regime.get("summary", "No regime summary available."))
+    regime_table = regime.get("table", pd.DataFrame())
+    if regime_table is not None and not regime_table.empty:
+        st.dataframe(regime_table.style.format({"Price": "{:,.2f}", "% Change": "{:.2f}%"}), use_container_width=True)
     else:
-        bearish_score += 1
+        st.warning("No global market snapshot available.")
 
-    if latest_close > latest_ema50:
-        bullish_score += 2
-    else:
-        bearish_score += 2
-
-    if latest_ema20 > latest_ema50:
-        bullish_score += 2
-    else:
-        bearish_score += 2
-
-    if latest_rsi > 60:
-        bullish_score += 1
-    elif latest_rsi < 40:
-        bearish_score += 1
-
-    total_score = bullish_score + bearish_score
-
-    bullish_probability = round((bullish_score / total_score) * 100, 1) if total_score else 50
-    bearish_probability = round((bearish_score / total_score) * 100, 1) if total_score else 50
-    sideways_probability = round(100 - abs(bullish_probability - bearish_probability), 1)
-
-    if bullish_probability > bearish_probability:
-        prediction = "Bullish"
-    elif bearish_probability > bullish_probability:
-        prediction = "Bearish"
-    else:
-        prediction = "Sideways"
-
-    st.divider()
-
-    st.subheader("Market Prediction")
-
-    p1, p2, p3 = st.columns(3)
-
-    p1.metric("Prediction", prediction)
-    p2.metric("Bullish Probability", f"{bullish_probability}%")
-    p3.metric("Bearish Probability", f"{bearish_probability}%")
-
-    st.write(f"Sideways/uncertainty score: **{sideways_probability}%**")
-
-    st.subheader("Price Chart")
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Candlestick(
-            x=data[data.columns[0]],
-            open=data["Open"],
-            high=data["High"],
-            low=data["Low"],
-            close=data["Close"],
-            name="Price"
-        )
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=data[data.columns[0]],
-            y=data["EMA20"],
-            mode="lines",
-            name="EMA 20"
-        )
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=data[data.columns[0]],
-            y=data["EMA50"],
-            mode="lines",
-            name="EMA 50"
-        )
-    )
-
-    fig.update_layout(
-        height=600,
-        xaxis_rangeslider_visible=False,
-        title=f"{selected_market} Price Chart"
-    )
-
+with tab2:
+    st.header("Market Chart")
+    fig = create_candlestick_chart(data, selected_market)
     st.plotly_chart(fig, use_container_width=True)
+    sr = detect_support_resistance(data)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Support", format_number(sr.get("support")))
+    c2.metric("Resistance", format_number(sr.get("resistance")))
+    c3.metric("Recent Low", format_number(sr.get("recent_low")))
+    c4.metric("Recent High", format_number(sr.get("recent_high")))
 
-    st.subheader("Technical Summary")
+with tab3:
+    st.header("Prediction Engine")
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Final Bias", prediction.get("final_bias", "N/A"))
+    p2.metric("Bullish", f"{prediction.get('bullish_probability', 0)}%")
+    p3.metric("Bearish", f"{prediction.get('bearish_probability', 0)}%")
+    p4.metric("Sideways", f"{prediction.get('sideways_probability', 0)}%")
+    st.metric("Confidence Score", f"{prediction.get('confidence_score', 0)}%")
+    st.subheader("Trade Scenario Levels")
+    level_df = pd.DataFrame([
+        {"Level": "Current Price", "Value": levels.get("current_price")},
+        {"Level": "Support", "Value": levels.get("support")},
+        {"Level": "Resistance", "Value": levels.get("resistance")},
+        {"Level": "Buy Confirmation", "Value": levels.get("buy_confirmation")},
+        {"Level": "Sell Confirmation", "Value": levels.get("sell_confirmation")},
+        {"Level": "Bullish Invalidation", "Value": levels.get("bullish_invalidation")},
+        {"Level": "Bearish Invalidation", "Value": levels.get("bearish_invalidation")},
+        {"Level": "Bullish TP1", "Value": levels.get("tp1_bullish")},
+        {"Level": "Bullish TP2", "Value": levels.get("tp2_bullish")},
+        {"Level": "Bearish TP1", "Value": levels.get("tp1_bearish")},
+        {"Level": "Bearish TP2", "Value": levels.get("tp2_bearish")},
+    ])
+    st.dataframe(level_df, use_container_width=True)
+    st.subheader("Prediction Explanation")
+    for item in prediction.get("explanations", []):
+        st.write(f"- {item}")
 
-    st.write(f"EMA 20: **{latest_ema20:,.2f}**")
-    st.write(f"EMA 50: **{latest_ema50:,.2f}**")
-    st.write(f"RSI 14: **{latest_rsi:.2f}**")
+with tab4:
+    st.header("Risk Manager")
+    st.write("Use this section to estimate safer risk. For CFDs, confirm value per point and contract size with your broker.")
+    direction = st.selectbox("Trade Direction", ["Buy", "Sell"])
+    default_entry = float(levels.get("current_price", latest_close))
+    if direction == "Buy":
+        default_sl = float(levels.get("bullish_invalidation", latest_close - indicator_summary.get("atr", 1)))
+    else:
+        default_sl = float(levels.get("bearish_invalidation", latest_close + indicator_summary.get("atr", 1)))
+    entry_price = st.number_input("Entry Price", value=default_entry, step=0.01)
+    stop_loss_price = st.number_input("Stop Loss Price", value=default_sl, step=0.01)
+    trade_plan = generate_trade_plan(direction=direction, entry_price=entry_price, stop_loss_price=stop_loss_price, account_equity=account_equity, risk_percentage=risk_percentage, value_per_point=value_per_point)
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Risk Amount", f"{trade_plan.get('risk_amount', 0)}")
+    r2.metric("Stop Distance", f"{trade_plan.get('stop_distance', 0)}")
+    r3.metric("Suggested Position Size", f"{trade_plan.get('suggested_position_size', 0)}")
+    st.subheader("Risk/Reward Targets")
+    rr_df = pd.DataFrame([
+        {"Target": "Entry", "Price": trade_plan.get("entry_price")},
+        {"Target": "Stop Loss", "Price": trade_plan.get("stop_loss_price")},
+        {"Target": "TP1", "Price": trade_plan.get("tp1"), "Risk/Reward": "1:1"},
+        {"Target": "TP2", "Price": trade_plan.get("tp2"), "Risk/Reward": "1:2"},
+        {"Target": "TP3", "Price": trade_plan.get("tp3"), "Risk/Reward": "1:3"},
+    ])
+    st.dataframe(rr_df, use_container_width=True)
+    st.warning(trade_plan.get("warning", ""))
 
-    st.info(
-        "Next upgrade: add support/resistance detection, news sentiment, "
-        "economic calendar, MT5 broker data, and backtesting."
-    )
+with tab5:
+    st.header("Technical Summary")
+    t1, t2, t3, t4 = st.columns(4)
+    t1.metric("Trend", indicator_summary.get("trend", "N/A"))
+    t2.metric("RSI 14", format_number(indicator_summary.get("rsi")))
+    t3.metric("MACD", indicator_summary.get("macd_status", "N/A"))
+    t4.metric("Volatility", indicator_summary.get("volatility_status", "N/A"))
+    summary_df = pd.DataFrame([
+        {"Indicator": "EMA 20", "Value": indicator_summary.get("ema20")},
+        {"Indicator": "EMA 50", "Value": indicator_summary.get("ema50")},
+        {"Indicator": "EMA 200", "Value": indicator_summary.get("ema200")},
+        {"Indicator": "RSI 14", "Value": indicator_summary.get("rsi")},
+        {"Indicator": "ATR 14", "Value": indicator_summary.get("atr")},
+        {"Indicator": "Trend", "Value": indicator_summary.get("trend")},
+        {"Indicator": "RSI Status", "Value": indicator_summary.get("rsi_status")},
+        {"Indicator": "MACD Status", "Value": indicator_summary.get("macd_status")},
+        {"Indicator": "Volatility Status", "Value": indicator_summary.get("volatility_status")},
+    ])
+    st.dataframe(summary_df, use_container_width=True)
+
+st.divider()
+st.caption("TrendIQ Markets | Educational market analytics only | Free data may be delayed and may differ from broker prices.")

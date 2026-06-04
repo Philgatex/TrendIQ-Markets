@@ -1,0 +1,1 @@
+# TrendIQ Markets modules package
