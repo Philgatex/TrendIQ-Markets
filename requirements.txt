@@ -5,3 +5,5 @@ yfinance
 plotly
 requests
 ccxt
+flake8
+black

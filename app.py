@@ -1,5 +1,7 @@
 import os
 import sys
+# Ensure repo root is on path (helps Streamlit Cloud imports)
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 from streamlit.components.v1 import html as st_html
