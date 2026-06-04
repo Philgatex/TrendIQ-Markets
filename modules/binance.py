@@ -66,13 +66,7 @@ def place_order(symbol: str, side: str, order_type: str, amount: float, price: O
         return {
             "skipped": True,
             "reason": "dry_run enabled",
-            "simulated_order": {
-                "symbol": symbol,
-                "side": side,
-                "type": order_type,
-                "amount": amount,
-                "price": price
-            }
+            "simulated_order": simulate_order_response(symbol, side, order_type, amount, price)
         }
 
     try:
@@ -84,6 +78,39 @@ def place_order(symbol: str, side: str, order_type: str, amount: float, price: O
         return resp
     except Exception as e:
         return {"error": str(e)}
+
+
+def simulate_order_response(symbol: str, side: str, order_type: str, amount: float, price: Optional[float] = None) -> Dict[str, Any]:
+    """Return a simulated order response resembling ccxt create_order output.
+
+    This is used when `dry_run=True` so tests and demos can inspect expected
+    fields without executing live orders.
+    """
+    import time
+
+    client_order_id = f"sim-{int(time.time()*1000)}"
+    response = {
+        "info": {
+            "symbol": symbol,
+            "side": side,
+            "type": order_type,
+            "amount": amount,
+            "price": price,
+        },
+        "id": client_order_id,
+        "clientOrderId": client_order_id,
+        "timestamp": int(time.time() * 1000),
+        "datetime": pd.to_datetime(int(time.time() * 1000), unit='ms').isoformat(),
+        "status": "open" if order_type == "limit" else "closed",
+        "symbol": symbol,
+        "type": order_type,
+        "side": side,
+        "price": price,
+        "amount": amount,
+        "filled": 0.0,
+        "remaining": amount,
+    }
+    return response
 
 
 def get_balance() -> Dict[str, Any]:

@@ -29,3 +29,7 @@ jobs:
       - name: Run provider tests (skip gracefully if optional deps missing)
         run: |
           python tests/providers_test.py || true
+      - name: Run Binance & MT5 tests (safe, non-destructive)
+        run: |
+          python tests/binance_test.py || true
+          python tests/mt5_order_test.py || true

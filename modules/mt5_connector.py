@@ -42,3 +42,19 @@ def get_mt5_history(symbol: str, timeframe: str = "M15", count: int = 500):
         return df
     except Exception:
         return pd.DataFrame()
+
+
+def place_mt5_order(symbol: str, side: str, volume: float, price: Optional[float] = None, dry_run: bool = True) -> dict:
+    """Stub for placing an MT5 order. Returns a simulated response when MT5 isn't available.
+
+    Note: Real MT5 order placement requires the MetaTrader5 package and a running MT5 terminal.
+    """
+    try:
+        import MetaTrader5 as mt5
+        # If initialized, you would call mt5.order_send with proper request dict here.
+        if dry_run:
+            return {"skipped": True, "reason": "dry_run enabled", "simulated": True}
+        # Live execution path would be implemented here when MT5 is available.
+        return {"skipped": True, "reason": "MT5 live execution not implemented in stub"}
+    except Exception:
+        return {"skipped": True, "reason": "MetaTrader5 not available", "simulated": True}
