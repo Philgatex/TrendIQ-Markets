@@ -1,6 +1,6 @@
 """Crypto connectors using CCXT with graceful fallbacks."""
-from typing import Optional
 import pandas as pd
+
 
 def get_ccxt_history(symbol: str, exchange_id: str = "binance", timeframe: str = "15m", limit: int = 500) -> pd.DataFrame:
     try:

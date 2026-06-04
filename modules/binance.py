@@ -44,7 +44,14 @@ def get_ticker(symbol: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def place_order(symbol: str, side: str, order_type: str, amount: float, price: Optional[float] = None, dry_run: bool = True) -> Dict[str, Any]:
+def place_order(
+    symbol: str,
+    side: str,
+    order_type: str,
+    amount: float,
+    price: Optional[float] = None,
+    dry_run: bool = True,
+) -> Dict[str, Any]:
     """Place a market or limit order on Binance via ccxt.
 
     - `side`: 'buy' or 'sell'
@@ -88,7 +95,8 @@ def simulate_order_response(symbol: str, side: str, order_type: str, amount: flo
     """
     import time
 
-    client_order_id = f"sim-{int(time.time()*1000)}"
+    ts = int(time.time() * 1000)
+    client_order_id = f"sim-{ts}"
     response = {
         "info": {
             "symbol": symbol,
@@ -99,8 +107,8 @@ def simulate_order_response(symbol: str, side: str, order_type: str, amount: flo
         },
         "id": client_order_id,
         "clientOrderId": client_order_id,
-        "timestamp": int(time.time() * 1000),
-        "datetime": pd.to_datetime(int(time.time() * 1000), unit='ms').isoformat(),
+        "timestamp": ts,
+        "datetime": pd.to_datetime(ts, unit='ms').isoformat(),
         "status": "open" if order_type == "limit" else "closed",
         "symbol": symbol,
         "type": order_type,
