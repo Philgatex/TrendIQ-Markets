@@ -1,6 +1,12 @@
+import os
+import sys
+
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+
+# Ensure repo root is on path (helps Streamlit Cloud imports)
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from modules.market_data import (
     MARKET_SYMBOLS,
@@ -249,7 +255,7 @@ with tab2:
     st.header("Market Chart")
 
     fig = create_candlestick_chart(data, selected_market)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     sr = detect_support_resistance(data)
 
@@ -289,7 +295,7 @@ with tab3:
         {"Level": "Bearish TP2", "Value": levels.get("tp2_bearish")},
     ])
 
-    st.dataframe(level_df, use_container_width=True)
+    st.dataframe(level_df, width='stretch')
 
     st.subheader("Prediction Explanation")
 
@@ -351,7 +357,7 @@ with tab4:
         {"Target": "TP3", "Price": trade_plan.get("tp3"), "Risk/Reward": "1:3"},
     ])
 
-    st.dataframe(rr_df, use_container_width=True)
+    st.dataframe(rr_df, width='stretch')
 
     st.warning(trade_plan.get("warning", ""))
 
@@ -378,7 +384,7 @@ with tab5:
         {"Indicator": "Volatility Status", "Value": indicator_summary.get("volatility_status")},
     ])
 
-    st.dataframe(summary_df, use_container_width=True)
+    st.dataframe(summary_df, width='stretch')
 
 
 st.divider()

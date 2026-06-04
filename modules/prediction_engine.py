@@ -1,6 +1,6 @@
 import pandas as pd
 
-from modules.indicators import detect_support_resistance
+from .indicators import detect_support_resistance
 
 
 def normalize_probabilities(bullish_score: float, bearish_score: float, sideways_score: float) -> dict:
