@@ -78,6 +78,13 @@ def format_number(value, decimals=2):
         return "N/A"
 
 
+def format_percentage(value, decimals=2):
+    try:
+        return f"{float(value):.{decimals}f}%"
+    except Exception:
+        return "N/A"
+
+
 def sanitize_for_streamlit(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure DataFrame dtypes are safe for Streamlit/pyarrow rendering.
 
@@ -442,7 +449,7 @@ col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Market", selected_market)
 col2.metric("Current Price", format_number(latest_close))
-col3.metric("Change", format_number(change), f"{change_pct:.2f}%")
+col3.metric("Change", format_number(change), format_percentage(change_pct))
 col4.metric("Bias", prediction.get("final_bias", "N/A"))
 
 st.caption(
@@ -475,6 +482,9 @@ with tab1:
 
     if regime_table is not None and not regime_table.empty:
         safe_regime = sanitize_for_streamlit(regime_table)
+        for numeric_col in ["Price", "% Change"]:
+            if numeric_col in safe_regime.columns:
+                safe_regime[numeric_col] = pd.to_numeric(safe_regime[numeric_col], errors="coerce")
         st.dataframe(
             safe_regime.style.format({
                 "Price": "{:,.2f}",
