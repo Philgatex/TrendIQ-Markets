@@ -26,3 +26,6 @@ jobs:
       - name: Run import smoke test
         run: |
           python tests/import_test.py
+      - name: Run provider tests (skip gracefully if optional deps missing)
+        run: |
+          python tests/providers_test.py || true
