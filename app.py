@@ -2,17 +2,21 @@ import os
 import sys
 
 import streamlit as st
+from streamlit.components.v1 import html as st_html
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # Ensure repo root is on path (helps Streamlit Cloud imports)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from modules.market_data import (
+    DATA_PROVIDERS,
     MARKET_SYMBOLS,
     get_market_data,
     get_latest_snapshot,
-    get_market_info
+    get_market_info,
+    get_market_trend_summary
 )
 
 from modules.indicators import (
@@ -32,10 +36,32 @@ st.set_page_config(
     layout="wide"
 )
 
+st.markdown(
+    """
+    <style>
+    .css-1d391kg {padding-top: 1rem;}
+    .stApp {
+        background-color: #0b1120;
+        color: #f8fafc;
+    }
+    .stSidebar {
+        background-color: #081026;
+    }
+    .st-bf {
+        background-color: #0f172a;
+    }
+    .streamlit-expanderHeader {
+        color: #f8fafc;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 
 @st.cache_data(ttl=60)
-def cached_market_data(symbol: str, period: str, interval: str):
-    return get_market_data(symbol, period, interval)
+def cached_market_data(symbol: str, period: str, interval: str, provider: str):
+    return get_market_data(symbol, period, interval, provider)
 
 
 @st.cache_data(ttl=120)
@@ -50,6 +76,33 @@ def format_number(value, decimals=2):
         return "N/A"
 
 
+def sanitize_for_streamlit(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure DataFrame dtypes are safe for Streamlit/pyarrow rendering.
+
+    - Convert numeric-like columns to numeric (coerce errors).
+    - Convert object columns with mixed types to strings.
+    - Preserve Datetime columns.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    for col in df.columns:
+        try:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                continue
+            # Try converting to numeric
+            df[col] = pd.to_numeric(df[col], errors="ignore")
+            # If still object with mixed types, cast to str
+            if df[col].dtype == object:
+                df[col] = df[col].astype(str)
+        except Exception:
+            df[col] = df[col].astype(str)
+
+    return df
+
+
 def create_candlestick_chart(df: pd.DataFrame, market_name: str):
     fig = go.Figure()
     time_col = df.columns[0]
@@ -61,7 +114,9 @@ def create_candlestick_chart(df: pd.DataFrame, market_name: str):
             high=df["High"],
             low=df["Low"],
             close=df["Close"],
-            name="Price"
+            name="Price",
+            increasing_line_color="#00b894",
+            decreasing_line_color="#d63031"
         )
     )
 
@@ -71,7 +126,8 @@ def create_candlestick_chart(df: pd.DataFrame, market_name: str):
                 x=df[time_col],
                 y=df["EMA20"],
                 mode="lines",
-                name="EMA 20"
+                name="EMA 20",
+                line=dict(color="#74b9ff", width=1)
             )
         )
 
@@ -81,7 +137,8 @@ def create_candlestick_chart(df: pd.DataFrame, market_name: str):
                 x=df[time_col],
                 y=df["EMA50"],
                 mode="lines",
-                name="EMA 50"
+                name="EMA 50",
+                line=dict(color="#fdcb6e", width=1)
             )
         )
 
@@ -91,18 +148,171 @@ def create_candlestick_chart(df: pd.DataFrame, market_name: str):
                 x=df[time_col],
                 y=df["EMA200"],
                 mode="lines",
-                name="EMA 200"
+                name="EMA 200",
+                line=dict(color="#6c5ce7", width=1)
             )
         )
 
     fig.update_layout(
+        template="plotly_dark",
         title=f"{market_name} Price Chart",
         height=650,
         xaxis_rangeslider_visible=False,
-        margin=dict(l=20, r=20, t=50, b=20)
+        margin=dict(l=20, r=20, t=50, b=20),
+        legend=dict(orientation="h", y=1.02, x=0)
     )
 
     return fig
+
+
+def create_technical_plot(df: pd.DataFrame, market_name: str):
+    time_col = df.columns[0]
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.55, 0.2, 0.25]
+    )
+
+    fig.add_trace(
+        go.Candlestick(
+            x=df[time_col],
+            open=df["Open"],
+            high=df["High"],
+            low=df["Low"],
+            close=df["Close"],
+            name="Price",
+            increasing_line_color="#00b894",
+            decreasing_line_color="#d63031"
+        ),
+        row=1,
+        col=1
+    )
+
+    for name, color in [("EMA20", "#74b9ff"), ("EMA50", "#fdcb6e"), ("EMA200", "#6c5ce7")]:
+        if name in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=df[time_col],
+                    y=df[name],
+                    mode="lines",
+                    name=name,
+                    line=dict(color=color, width=1)
+                ),
+                row=1,
+                col=1
+            )
+
+    if "Volume" in df.columns:
+        fig.add_trace(
+            go.Bar(
+                x=df[time_col],
+                y=df["Volume"],
+                name="Volume",
+                marker_color="#0984e3"
+            ),
+            row=2,
+            col=1
+        )
+
+    if "RSI" in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df[time_col],
+                y=df["RSI"],
+                mode="lines",
+                name="RSI 14",
+                line=dict(color="#fd79a8", width=1)
+            ),
+            row=3,
+            col=1
+        )
+        fig.add_hline(y=70, line_dash="dash", line_color="#d63031", row=3, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="#00b894", row=3, col=1)
+
+    fig.update_layout(
+        template="plotly_dark",
+        title=f"{market_name} Technical Chart",
+        height=900,
+        margin=dict(l=20, r=20, t=50, b=20),
+        legend=dict(orientation="h", y=1.02, x=0)
+    )
+
+    fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+    return fig
+
+
+def get_tradingview_symbol(symbol: str) -> str:
+    if symbol == "EURUSD=X":
+        return "OANDA:EURUSD"
+    if symbol == "GBPUSD=X":
+        return "OANDA:GBPUSD"
+    if symbol == "JPY=X":
+        return "OANDA:USDJPY"
+    if symbol == "AUDUSD=X":
+        return "OANDA:AUDUSD"
+    if symbol == "CAD=X":
+        return "OANDA:USDCAD"
+    if symbol == "CHF=X":
+        return "OANDA:USDCHF"
+    if symbol == "EURJPY=X":
+        return "OANDA:EURJPY"
+    if symbol == "GBPJPY=X":
+        return "OANDA:GBPJPY"
+    if symbol == "AUDJPY=X":
+        return "OANDA:AUDJPY"
+    if symbol == "EURGBP=X":
+        return "OANDA:EURGBP"
+    if symbol == "BTC-USD":
+        return "COINBASE:BTCUSD"
+    if symbol == "ETH-USD":
+        return "COINBASE:ETHUSD"
+    if symbol in ["QQQ", "SPY", "DIA", "IWM"]:
+        return f"NASDAQ:{symbol}"
+    return ""
+
+
+def render_tradingview_widget(symbol: str, interval: str = "15m") -> bool:
+    tradingview_symbol = get_tradingview_symbol(symbol)
+    if not tradingview_symbol:
+        return False
+
+    interval_map = {
+        "1m": "1",
+        "5m": "5",
+        "15m": "15",
+        "30m": "30",
+        "1h": "60",
+        "1d": "D",
+    }
+    tv_interval = interval_map.get(interval, "15")
+    st_html(
+        f"""
+        <div class="tradingview-widget-container">
+          <div id="tradingview_{symbol.replace('/', '').replace('=', '')}"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+          <script type="text/javascript">
+          new TradingView.widget({{
+            "width": "100%",
+            "height": 650,
+            "symbol": "{tradingview_symbol}",
+            "interval": "{tv_interval}",
+            "timezone": "Etc/UTC",
+            "theme": "dark",
+            "style": "1",
+            "locale": "en",
+            "toolbar_bg": "#0f172a",
+            "enable_publishing": false,
+            "allow_symbol_change": true,
+            "container_id": "tradingview_{symbol.replace('/', '').replace('=', '')}"
+          }});
+          </script>
+        </div>
+        """,
+        height=700,
+    )
+    return True
 
 
 st.title("TrendIQ Markets")
@@ -124,6 +334,26 @@ selected_market = st.sidebar.selectbox(
     market_names,
     index=0
 )
+
+provider_label = st.sidebar.selectbox(
+    "Data Provider",
+    list(DATA_PROVIDERS.keys()),
+    index=0,
+    help="Select a live market data provider. Twelve Data requires a free API key set in TWELVE_DATA_API_KEY."
+)
+
+chart_mode = st.sidebar.selectbox(
+    "Chart Mode",
+    ["TrendIQ chart", "TradingView widget"],
+    index=0,
+    help="Use a built-in TrendIQ chart or the TradingView-style embedded widget."
+)
+
+if provider_label == "Twelve Data (free API)" and not os.environ.get("TWELVE_DATA_API_KEY"):
+    st.sidebar.warning(
+        "Twelve Data is selected but TWELVE_DATA_API_KEY is not configured. "
+        "The app will fall back to Yahoo Finance until a free Twelve Data key is provided."
+    )
 
 period = st.sidebar.selectbox(
     "Data Period",
@@ -176,8 +406,10 @@ market_type = market_info.get("type", "index")
 
 
 with st.spinner("Loading market data..."):
-    data = cached_market_data(symbol, period, interval)
+    data = cached_market_data(symbol, period, interval, DATA_PROVIDERS.get(provider_label, "yfinance"))
     snapshot_df = cached_snapshot()
+
+trend_summary = get_market_trend_summary(symbol, interval="1h")
 
 if data.empty:
     st.error("No data available. Try another market, period, or interval.")
@@ -213,7 +445,7 @@ col4.metric("Bias", prediction.get("final_bias", "N/A"))
 
 st.caption(
     f"Symbol used: **{symbol}** | Market type: **{market_type}** | "
-    f"Data source: **yfinance free market data**"
+    f"Data provider: **{provider_label}**"
 )
 
 
@@ -240,12 +472,13 @@ with tab1:
     regime_table = regime.get("table", pd.DataFrame())
 
     if regime_table is not None and not regime_table.empty:
+        safe_regime = sanitize_for_streamlit(regime_table)
         st.dataframe(
-            regime_table.style.format({
+            safe_regime.style.format({
                 "Price": "{:,.2f}",
                 "% Change": "{:.2f}%"
             }),
-            use_container_width=True
+            width='stretch'
         )
     else:
         st.warning("No global market snapshot available.")
@@ -254,8 +487,15 @@ with tab1:
 with tab2:
     st.header("Market Chart")
 
-    fig = create_candlestick_chart(data, selected_market)
-    st.plotly_chart(fig, width='stretch')
+    if chart_mode == "TradingView widget":
+        rendered = render_tradingview_widget(symbol, interval)
+        if not rendered:
+            st.warning("TradingView widget is not available for this symbol. Showing TrendIQ chart instead.")
+            fig = create_technical_plot(data, selected_market)
+            st.plotly_chart(fig, width='stretch')
+    else:
+        fig = create_technical_plot(data, selected_market)
+        st.plotly_chart(fig, width='stretch')
 
     sr = detect_support_resistance(data)
 
@@ -295,9 +535,33 @@ with tab3:
         {"Level": "Bearish TP2", "Value": levels.get("tp2_bearish")},
     ])
 
-    st.dataframe(level_df, width='stretch')
+    st.dataframe(sanitize_for_streamlit(level_df), width='stretch')
 
     st.subheader("Prediction Explanation")
+
+    signal_label = prediction.get("final_bias", "N/A")
+    if trend_summary:
+        signal_label = trend_summary.get("summary", {}).get("signal", signal_label)
+
+    st.markdown(f"**Suggested Action:** {signal_label}")
+
+    if trend_summary:
+        st.write("**Market trend analysis:**")
+        st.write(f"- Overall summary: {trend_summary.get('summary', {}).get('signal', 'N/A')}")
+        st.write(f"- Strength: {trend_summary.get('summary', {}).get('strength', 'N/A')}")
+
+        moving_averages = trend_summary.get("moving_averages", {})
+        oscillators = trend_summary.get("oscillators", {})
+
+        if moving_averages:
+            st.write("- Moving average bias:")
+            for item, value in moving_averages.items():
+                st.write(f"  - {item}: {value}")
+
+        if oscillators:
+            st.write("- Momentum oscillator bias:")
+            for item, value in oscillators.items():
+                st.write(f"  - {item}: {value}")
 
     for item in prediction.get("explanations", []):
         st.write(f"- {item}")
@@ -357,7 +621,7 @@ with tab4:
         {"Target": "TP3", "Price": trade_plan.get("tp3"), "Risk/Reward": "1:3"},
     ])
 
-    st.dataframe(rr_df, width='stretch')
+    st.dataframe(sanitize_for_streamlit(rr_df), width='stretch')
 
     st.warning(trade_plan.get("warning", ""))
 
@@ -384,7 +648,7 @@ with tab5:
         {"Indicator": "Volatility Status", "Value": indicator_summary.get("volatility_status")},
     ])
 
-    st.dataframe(summary_df, width='stretch')
+    st.dataframe(sanitize_for_streamlit(summary_df), width='stretch')
 
 
 st.divider()

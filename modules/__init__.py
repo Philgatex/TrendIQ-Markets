@@ -6,4 +6,6 @@ __all__ = [
     "prediction_engine",
     "risk_engine",
     "sentiment_engine",
+    "crypto",
+    "mt5_connector",
 ]
